@@ -88,7 +88,7 @@ class AudioDubbingService : Service() {
             }, android.os.Handler(mainLooper))
             connectGemini(key)
         } catch (e: Exception) {
-            updateNotification("خطا: ${e.message ?: "شروع ضبط ناموفق بود"}")
+            publishStatus("خطا: ${e.message ?: "شروع ضبط ناموفق بود"}")
             stopSelf()
         }
         return START_NOT_STICKY
@@ -99,15 +99,18 @@ class AudioDubbingService : Service() {
         val request = Request.Builder().url(url).build()
         socket = client.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
+                // Live Translate is a dedicated translation model: configure the target
+                // language with translationConfig (systemInstruction is not supported).
                 val setup = JSONObject()
                     .put("setup", JSONObject()
                         .put("model", "models/gemini-3.5-live-translate-preview")
                         .put("generationConfig", JSONObject()
                             .put("responseModalities", org.json.JSONArray().put("AUDIO"))
-                            .put("speechConfig", JSONObject().put("languageCode", "fa-IR")))
-                        .put("systemInstruction", JSONObject().put("parts",
-                            org.json.JSONArray().put(JSONObject().put("text",
-                                "You are a real-time video dubbing translator. Translate all incoming speech into natural spoken Persian (Farsi). Do not answer or converse; only translate the speech. Preserve meaning and tone, and do not describe sounds.")))))
+                            .put("inputAudioTranscription", JSONObject())
+                            .put("outputAudioTranscription", JSONObject())
+                            .put("translationConfig", JSONObject()
+                                .put("targetLanguageCode", "fa")
+                                .put("echoTargetLanguage", false))))
                 webSocket.send(setup.toString())
             }
 
@@ -116,7 +119,14 @@ class AudioDubbingService : Service() {
                     val root = JSONObject(text)
                     if (root.has("setupComplete")) {
                         startAudioCapture()
-                        updateNotification("دوبلهٔ زنده فعال است")
+                        publishStatus("دوبلهٔ زنده فعال است")
+                    }
+                    if (root.has("error")) {
+                        val error = root.optJSONObject("error")
+                        val message = error?.optString("message").orEmpty()
+                        publishStatus("خطای Gemini: " + message.ifBlank { "پاسخ نامعتبر از سرویس" })
+                        stopSelf()
+                        return
                     }
                     val parts = root.optJSONObject("serverContent")
                         ?.optJSONObject("modelTurn")
@@ -132,7 +142,12 @@ class AudioDubbingService : Service() {
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-                updateNotification("اتصال ترجمه قطع شد: ${t.message ?: "خطای شبکه"}")
+                val httpCode = response?.code?.let { " HTTP $it" }.orEmpty()
+                publishStatus("خطای اتصال$httpCode: ${t.message ?: "خطای شبکه"}")
+            }
+
+            override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                if (running.get()) publishStatus("اتصال بسته شد ($code): $reason")
             }
         })
     }
@@ -195,7 +210,7 @@ class AudioDubbingService : Service() {
             }
         } catch (e: Exception) {
             running.set(false)
-            updateNotification("ضبط صدا ناموفق بود: ${e.message ?: "خطا"}")
+            publishStatus("ضبط صدا ناموفق بود: ${e.message ?: "خطا"}")
         }
     }
 
@@ -230,7 +245,8 @@ class AudioDubbingService : Service() {
             .build()
     }
 
-    private fun updateNotification(text: String) {
+    private fun publishStatus(text: String) {
+        getSharedPreferences("dubdu", MODE_PRIVATE).edit().putString("status", text).apply()
         val manager = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
         manager.notify(NOTIFICATION_ID, buildNotification(text))
     }
