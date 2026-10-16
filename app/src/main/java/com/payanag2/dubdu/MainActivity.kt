@@ -88,6 +88,7 @@ class MainActivity : Activity() {
             text = "توقف دوبله"
             setOnClickListener {
                 stopService(Intent(this@MainActivity, AudioDubbingService::class.java))
+                prefs.edit().putString("status", "دوبله متوقف شد.").apply()
                 status.text = "دوبله متوقف شد."
             }
         }
