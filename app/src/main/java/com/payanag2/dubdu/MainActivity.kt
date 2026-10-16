@@ -5,6 +5,7 @@ import android.content.Intent
 import android.media.projection.MediaProjectionManager
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
 import android.view.Gravity
 import android.view.ViewGroup
 import android.widget.Button
@@ -18,6 +19,25 @@ class MainActivity : Activity() {
     private lateinit var status: TextView
     private val projectionRequest = 701
     private val prefs by lazy { getSharedPreferences("dubdu", MODE_PRIVATE) }
+    private val statusHandler = Handler(mainLooper)
+    private val statusPoll = object : Runnable {
+        override fun run() {
+            if (::status.isInitialized) {
+                status.text = prefs.getString("status", status.text.toString())
+            }
+            statusHandler.postDelayed(this, 700)
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        statusHandler.post(statusPoll)
+    }
+
+    override fun onPause() {
+        statusHandler.removeCallbacks(statusPoll)
+        super.onPause()
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -94,6 +114,7 @@ class MainActivity : Activity() {
         }
         prefs.edit().putString("api_key", key).apply()
         val manager = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+        prefs.edit().putString("status", "برای اشتراک‌گذاری صدای دستگاه اجازه بده…").apply()
         status.text = "برای اشتراک‌گذاری صدای دستگاه اجازه بده…"
         @Suppress("DEPRECATION")
         startActivityForResult(manager.createScreenCaptureIntent(), projectionRequest)
@@ -104,6 +125,7 @@ class MainActivity : Activity() {
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode != projectionRequest) return
         if (resultCode != RESULT_OK || data == null) {
+            prefs.edit().putString("status", "اجازهٔ ضبط صدای دستگاه داده نشد.").apply()
             status.text = "اجازهٔ ضبط صدای دستگاه داده نشد."
             return
         }
@@ -114,7 +136,8 @@ class MainActivity : Activity() {
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(service)
         else startService(service)
-        status.text = "در حال اتصال و آماده‌سازی دوبله…"
+        prefs.edit().putString("status", "در حال اتصال به Gemini…").apply()
+        status.text = "در حال اتصال به Gemini…"
     }
 
     private fun dp(value: Int) = (value * resources.displayMetrics.density).toInt()
